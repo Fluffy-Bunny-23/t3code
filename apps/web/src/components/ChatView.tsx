@@ -4463,19 +4463,21 @@ function ChatViewContent(props: ChatViewProps) {
       ),
       title: working
         ? liveCount > 0
-          ? `${liveCount} ${liveCount === 1 ? "agent" : "agents"} working in the background`
-          : "Background work running"
-        : "Monitoring in the background",
+          ? `${liveCount} ${liveCount === 1 ? "agent" : "agents"} working`
+          : "Background work"
+        : "Monitoring",
       actions: (
         <Button
-          size="xs"
-          variant="outline"
+          size="micro"
+          variant="ghost-muted"
+          className="text-[11px] sm:text-[11px]"
           disabled={isStoppingBackgroundWork}
           onClick={() => void handleStopBackgroundWork()}
         >
           {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
         </Button>
       ),
+      className: "px-3 pt-1.5 text-xs",
     };
   }, [
     activeBackgroundLiveness,
@@ -4631,7 +4633,6 @@ function ChatViewContent(props: ChatViewProps) {
     systemComposerBannerItems,
     wokeThreadBannerItem,
   ]);
-
   useEffect(() => {
     setPendingServerThreadEnvMode(null);
     setPendingServerThreadBranch(undefined);
@@ -6387,7 +6388,12 @@ function ChatViewContent(props: ChatViewProps) {
               >
                 <div className="pointer-events-auto relative z-10">
                   {isDraftHeroState ? (
-                    <div className="absolute inset-x-0 bottom-full z-0">
+                    <div
+                      className={cn(
+                        "absolute inset-x-0 bottom-full z-0",
+                        composerBannerItems.length > 0 && "chat-composer-drawer-host",
+                      )}
+                    >
                       <div
                         className="pb-8"
                         style={
@@ -6412,7 +6418,7 @@ function ChatViewContent(props: ChatViewProps) {
                     <ThreadSyncStatusPill phase={threadSyncPhase} />
                   ) : null}
                   <div
-                    className="relative"
+                    className="chat-composer-shell-slot relative"
                     style={
                       forceExpandedMobileComposer
                         ? { viewTransitionName: MOBILE_COMPOSER_VIEW_TRANSITION_NAME }
