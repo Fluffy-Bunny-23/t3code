@@ -2,8 +2,8 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs four jobs on pull requests and
-pushes to `main`:
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs these quality gates on pull requests
+and pushes to `main`:
 
 - **Check**: `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
   then `vpr typecheck` for the workspace type check. The same job
@@ -13,10 +13,11 @@ pushes to `main`:
 - **Mobile Native Static Analysis**: `vp run lint:mobile` on macOS, wrapping
   `scripts/mobile-native-static-check.ts`. A cheap Linux **Mobile Native Changes** job gates it:
   the macOS runner only boots when the diff touches `apps/mobile` Swift/Kotlin sources, the
-  SwiftLint/detekt/ktlint configuration, the `Brewfile`, the check script, or `ci.yml`. Otherwise
-  the job is skipped, which GitHub reports as success for the required check. Renames are matched on
-  both their old and new path. If the changed-file list cannot be resolved, or GitHub truncates it,
-  the gate fails open and the lint runs.
+  SwiftLint/detekt/ktlint configuration, the `Brewfile`, the check script, the root `package.json`
+  that defines `lint:mobile`, or `ci.yml`. Otherwise the job is skipped, which GitHub reports as
+  success for the required check. Renames are matched on both their old and new path. If the
+  changed-file list cannot be resolved, or GitHub truncates it, the gate fails open and the lint
+  runs.
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
 
