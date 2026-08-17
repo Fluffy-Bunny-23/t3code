@@ -11,7 +11,11 @@ pushes to `main`:
   still exports its expected symbols.
 - **Test**: `vp run test` across the workspace.
 - **Mobile Native Static Analysis**: `vp run lint:mobile` on macOS, wrapping
-  `scripts/mobile-native-static-check.ts`.
+  `scripts/mobile-native-static-check.ts`. A cheap Linux **Mobile Native Changes** job gates it:
+  the macOS runner only boots when the diff touches `apps/mobile` Swift/Kotlin sources, the
+  SwiftLint/detekt/ktlint configuration, the `Brewfile`, the check script, or `ci.yml`. Otherwise
+  the job is skipped, which GitHub reports as success for the required check. If the changed-file
+  list cannot be resolved, the gate fails open and the lint runs.
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
 
