@@ -15,9 +15,9 @@ and pushes to `main`:
   the macOS runner only boots when the diff touches `apps/mobile` Swift/Kotlin sources, the
   SwiftLint/detekt/ktlint configuration, the `Brewfile`, the check script, the root `package.json`
   that defines `lint:mobile`, or `ci.yml`. Otherwise the job is skipped, which GitHub reports as
-  success for the required check. Renames are matched on both their old and new path. If the
-  changed-file list cannot be resolved, or GitHub truncates it, the gate fails open and the lint
-  runs.
+  success for the required check. Renames are matched on both their old and new path. The gate fails
+  open in every other case: if the changed-file list cannot be resolved, GitHub truncates it, or the
+  gate job itself fails, the lint runs.
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
 
