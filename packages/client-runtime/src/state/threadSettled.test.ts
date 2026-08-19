@@ -34,38 +34,58 @@ describe("changeRequestAutoSettles", () => {
   });
 
   const THREAD_CREATED_AT = "2026-04-01T00:00:00.000Z";
+  const idleThread = {
+    createdAt: THREAD_CREATED_AT,
+    latestUserMessageAt: null,
+    latestTurn: null,
+  };
 
   it("ignores a terminal change request last touched before the thread existed", () => {
     for (const state of ["merged", "closed"] as const) {
       expect(
         changeRequestAutoSettles(
           { state, updatedAt: "2026-03-31T23:59:59.999Z" },
-          { threadCreatedAt: THREAD_CREATED_AT },
+          { thread: idleThread },
         ),
       ).toBe(false);
     }
   });
 
-  it("settles on a terminal change request touched at or after thread creation", () => {
+  it("settles on a terminal change request touched at or after the thread's latest event", () => {
     for (const updatedAt of [THREAD_CREATED_AT, "2026-04-02T00:00:00.000Z"]) {
-      expect(
-        changeRequestAutoSettles(
-          { state: "merged", updatedAt },
-          { threadCreatedAt: THREAD_CREATED_AT },
-        ),
-      ).toBe(true);
+      expect(changeRequestAutoSettles({ state: "merged", updatedAt }, { thread: idleThread })).toBe(
+        true,
+      );
     }
   });
 
-  it("falls back to settling when either timestamp is missing or malformed", () => {
-    expect(
-      changeRequestAutoSettles({ state: "merged" }, { threadCreatedAt: THREAD_CREATED_AT }),
-    ).toBe(true);
+  it("never re-settles a thread revived after the merge", () => {
+    // Settling on a merge happens once: a user message newer than the PR's
+    // last activity means the conversation outlived the PR.
+    const revived = {
+      createdAt: THREAD_CREATED_AT,
+      latestUserMessageAt: "2026-04-05T00:00:00.000Z",
+      latestTurn: null,
+    };
     expect(
       changeRequestAutoSettles(
-        { state: "merged", updatedAt: null },
-        { threadCreatedAt: THREAD_CREATED_AT },
+        { state: "merged", updatedAt: "2026-04-03T00:00:00.000Z" },
+        { thread: revived },
       ),
+    ).toBe(false);
+    // A merge landing after the revival still settles.
+    expect(
+      changeRequestAutoSettles(
+        { state: "merged", updatedAt: "2026-04-06T00:00:00.000Z" },
+        { thread: revived },
+      ),
+    ).toBe(true);
+  });
+
+  it("falls back to settling when either timestamp is missing or malformed", () => {
+    expect(changeRequestAutoSettles({ state: "merged" }, { thread: idleThread })).toBe(true);
+    expect(
+      changeRequestAutoSettles({ state: "merged", updatedAt: null }, { thread: idleThread }),
     ).toBe(true);
     expect(
       changeRequestAutoSettles({ state: "merged", updatedAt: "2026-03-01T00:00:00.000Z" }, {}),
@@ -73,7 +93,7 @@ describe("changeRequestAutoSettles", () => {
     expect(
       changeRequestAutoSettles(
         { state: "merged", updatedAt: "not-a-date" },
-        { threadCreatedAt: THREAD_CREATED_AT },
+        { thread: idleThread },
       ),
     ).toBe(true);
   });
@@ -238,9 +258,10 @@ describe("effectiveSettled", () => {
     }
   });
 
-  it("ignores a change request that merged before the thread was created", () => {
+  it("ignores a change request that merged before the thread's latest event", () => {
     // A new thread started at a worktree root inherits the branch's old
-    // merged PR; that history must not settle the fresh conversation.
+    // merged PR, and a revived thread outlives its merge; neither settles
+    // the live conversation.
     const fresh = makeShell({ activityAt: FRESH });
     for (const state of ["merged", "closed"] as const) {
       expect(

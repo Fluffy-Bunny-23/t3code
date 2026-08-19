@@ -4201,7 +4201,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (
       changeRequestAutoSettles(activeThreadChangeRequest, {
         autoSettleOnMerge,
-        threadCreatedAt: activeThreadShell?.createdAt ?? null,
+        thread: activeThreadShell,
       })
     ) {
       return false;
@@ -4226,7 +4226,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeLatestTurn?.completedAt,
     activeThreadLastVisitedAt,
     activeThreadChangeRequest,
-    activeThreadShell?.createdAt,
+    activeThreadShell,
     activeThreadWokeAt,
     autoSettleOnMerge,
   ]);

@@ -820,7 +820,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
     !changeRequestAutoSettles(pr, {
       autoSettleOnMerge: props.autoSettleOnMerge,
-      threadCreatedAt: thread.createdAt,
+      thread,
     });
   // In-flight rows (working, or waiting on approval/input) fade as a whole:
   // there is nothing for the user to do yet, so prominence is reserved for

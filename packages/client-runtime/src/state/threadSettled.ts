@@ -13,18 +13,27 @@ export interface ChangeRequestSettleSource {
   readonly updatedAt?: string | null | undefined;
 }
 
+/** What the settle rules need to know about the thread's own timeline. */
+export type ThreadActivitySource = Pick<
+  OrchestrationThreadShell,
+  "createdAt" | "latestUserMessageAt" | "latestTurn"
+>;
+
 /**
  * Returns whether the change request settles the thread immediately. A
- * terminal request last touched BEFORE the thread was created is history the
- * thread merely inherited from its branch (a new thread started at a
- * worktree root whose PR already merged), not this thread's outcome — it
- * never settles. Unknown timestamps keep the old always-settle behavior.
+ * terminal request settles the thread only while it is the thread's latest
+ * event: settling on a merge happens ONCE. A request last touched before the
+ * thread was created is inherited branch history (a new thread started at a
+ * worktree root whose PR already merged), and one older than the thread's
+ * latest activity was already adjudicated — re-engaging a thread whose PR
+ * merged is the user saying the conversation outlived the PR. Unknown
+ * timestamps keep the old always-settle behavior.
  */
 export function changeRequestAutoSettles(
   changeRequest: ChangeRequestSettleSource | null | undefined,
   options: {
     readonly autoSettleOnMerge?: boolean | undefined;
-    readonly threadCreatedAt?: string | null | undefined;
+    readonly thread?: ThreadActivitySource | null | undefined;
   } = {},
 ): boolean {
   if (changeRequest == null) return false;
@@ -32,18 +41,21 @@ export function changeRequestAutoSettles(
     changeRequest.state === "closed" ||
     (changeRequest.state === "merged" && options.autoSettleOnMerge !== false);
   if (!terminal) return false;
-  if (changeRequest.updatedAt == null || options.threadCreatedAt == null) return true;
+  if (changeRequest.updatedAt == null || options.thread == null) return true;
   const updatedAtMs = Date.parse(changeRequest.updatedAt);
-  const createdAtMs = Date.parse(options.threadCreatedAt);
+  const anchorAt = threadLastActivityAt(options.thread) ?? options.thread.createdAt;
+  const anchorAtMs = Date.parse(anchorAt);
   // Malformed timestamps fall back to settling, matching servers that never
   // report updatedAt.
-  if (Number.isNaN(updatedAtMs) || Number.isNaN(createdAtMs)) return true;
-  return updatedAtMs >= createdAtMs;
+  if (Number.isNaN(updatedAtMs) || Number.isNaN(anchorAtMs)) return true;
+  return updatedAtMs >= anchorAtMs;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
-export function threadLastActivityAt(shell: OrchestrationThreadShell): string | null {
+export function threadLastActivityAt(
+  shell: Pick<OrchestrationThreadShell, "latestUserMessageAt" | "latestTurn">,
+): string | null {
   const candidates = [
     shell.latestUserMessageAt,
     shell.latestTurn?.requestedAt,
@@ -260,9 +272,9 @@ export function threadWokeAt(
  * override. Past the blockers, the explicit user override (thread.settle /
  * thread.unsettle commands, projected into settledOverride + settledAt)
  * wins in both directions; without one, a thread can auto-settle on a
- * merged PR or always on a closed PR (both only when the terminal state is
- * not older than the thread itself, see changeRequestAutoSettles), or
- * settles on inactivity past the window.
+ * merged PR or always on a closed PR (both only while the terminal state is
+ * the thread's latest event, see changeRequestAutoSettles), or settles on
+ * inactivity past the window.
  * An open PR blocks the inactivity path entirely. The server
  * un-settles on real activity (user message, session start, approval/
  * user-input request), so an override never goes stale silently.
@@ -302,7 +314,7 @@ export function effectiveSettled(
   if (
     changeRequestAutoSettles(options.changeRequest, {
       autoSettleOnMerge: options.autoSettleOnMerge,
-      threadCreatedAt: shell.createdAt,
+      thread: shell,
     })
   ) {
     return true;
