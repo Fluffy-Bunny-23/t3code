@@ -20,14 +20,33 @@ export type ThreadActivitySource = Pick<
 >;
 
 /**
+ * Latest USER-initiated activity: messages and the turn requests they start,
+ * deliberately not the agent-side started/completed stamps. The settle-on-
+ * merge anchor uses this so a merge landing mid-turn still settles the
+ * thread when that turn finishes, while a user re-engaging after the merge
+ * blocks it for good. Falls back to creation time for untouched threads.
+ */
+function threadUserActivityAnchorAt(thread: ThreadActivitySource): string {
+  const messageAt = thread.latestUserMessageAt;
+  const requestedAt = thread.latestTurn?.requestedAt;
+  let anchor = thread.createdAt;
+  for (const candidate of [messageAt, requestedAt]) {
+    if (candidate != null && Date.parse(candidate) > Date.parse(anchor)) {
+      anchor = candidate;
+    }
+  }
+  return anchor;
+}
+
+/**
  * Returns whether the change request settles the thread immediately. A
- * terminal request settles the thread only while it is the thread's latest
- * event: settling on a merge happens ONCE. A request last touched before the
- * thread was created is inherited branch history (a new thread started at a
- * worktree root whose PR already merged), and one older than the thread's
- * latest activity was already adjudicated — re-engaging a thread whose PR
- * merged is the user saying the conversation outlived the PR. Unknown
- * timestamps keep the old always-settle behavior.
+ * terminal request settles the thread only while it postdates every user-
+ * initiated event in it: settling on a merge happens ONCE. A request last
+ * touched before the thread was created is inherited branch history (a new
+ * thread started at a worktree root whose PR already merged), and one older
+ * than the user's latest engagement was already adjudicated — re-engaging a
+ * thread whose PR merged is the user saying the conversation outlived the
+ * PR. Unknown timestamps keep the old always-settle behavior.
  */
 export function changeRequestAutoSettles(
   changeRequest: ChangeRequestSettleSource | null | undefined,
@@ -43,8 +62,7 @@ export function changeRequestAutoSettles(
   if (!terminal) return false;
   if (changeRequest.updatedAt == null || options.thread == null) return true;
   const updatedAtMs = Date.parse(changeRequest.updatedAt);
-  const anchorAt = threadLastActivityAt(options.thread) ?? options.thread.createdAt;
-  const anchorAtMs = Date.parse(anchorAt);
+  const anchorAtMs = Date.parse(threadUserActivityAnchorAt(options.thread));
   // Malformed timestamps fall back to settling, matching servers that never
   // report updatedAt.
   if (Number.isNaN(updatedAtMs) || Number.isNaN(anchorAtMs)) return true;

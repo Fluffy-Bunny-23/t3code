@@ -82,6 +82,29 @@ describe("changeRequestAutoSettles", () => {
     ).toBe(true);
   });
 
+  it("still settles when the merge lands during an in-flight turn", () => {
+    // Anchor is user-initiated activity only: the agent finishing a turn
+    // after the merge must not block the settle the merge earned.
+    const midTurnMerge = {
+      createdAt: THREAD_CREATED_AT,
+      latestUserMessageAt: "2026-04-02T00:00:00.000Z",
+      latestTurn: {
+        turnId: TurnId.make("turn-mid"),
+        state: "completed" as const,
+        requestedAt: "2026-04-02T00:00:00.000Z",
+        startedAt: "2026-04-02T00:00:05.000Z",
+        completedAt: "2026-04-02T00:20:00.000Z",
+        assistantMessageId: null,
+      },
+    };
+    expect(
+      changeRequestAutoSettles(
+        { state: "merged", updatedAt: "2026-04-02T00:10:00.000Z" },
+        { thread: midTurnMerge },
+      ),
+    ).toBe(true);
+  });
+
   it("falls back to settling when either timestamp is missing or malformed", () => {
     expect(changeRequestAutoSettles({ state: "merged" }, { thread: idleThread })).toBe(true);
     expect(
