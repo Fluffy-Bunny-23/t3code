@@ -3,12 +3,42 @@ import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 
-/** Returns whether the change request state settles the thread immediately. */
+/**
+ * The slice of a change request the settle rules need. `updatedAt` is the
+ * provider's last-activity timestamp; for a merged/closed request it bounds
+ * when the terminal state landed.
+ */
+export interface ChangeRequestSettleSource {
+  readonly state: ChangeRequestStateLike;
+  readonly updatedAt?: string | null | undefined;
+}
+
+/**
+ * Returns whether the change request settles the thread immediately. A
+ * terminal request last touched BEFORE the thread was created is history the
+ * thread merely inherited from its branch (a new thread started at a
+ * worktree root whose PR already merged), not this thread's outcome — it
+ * never settles. Unknown timestamps keep the old always-settle behavior.
+ */
 export function changeRequestAutoSettles(
-  state: ChangeRequestStateLike | null | undefined,
-  autoSettleOnMerge = true,
+  changeRequest: ChangeRequestSettleSource | null | undefined,
+  options: {
+    readonly autoSettleOnMerge?: boolean | undefined;
+    readonly threadCreatedAt?: string | null | undefined;
+  } = {},
 ): boolean {
-  return state === "closed" || (state === "merged" && autoSettleOnMerge);
+  if (changeRequest == null) return false;
+  const terminal =
+    changeRequest.state === "closed" ||
+    (changeRequest.state === "merged" && options.autoSettleOnMerge !== false);
+  if (!terminal) return false;
+  if (changeRequest.updatedAt == null || options.threadCreatedAt == null) return true;
+  const updatedAtMs = Date.parse(changeRequest.updatedAt);
+  const createdAtMs = Date.parse(options.threadCreatedAt);
+  // Malformed timestamps fall back to settling, matching servers that never
+  // report updatedAt.
+  if (Number.isNaN(updatedAtMs) || Number.isNaN(createdAtMs)) return true;
+  return updatedAtMs >= createdAtMs;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -230,8 +260,10 @@ export function threadWokeAt(
  * override. Past the blockers, the explicit user override (thread.settle /
  * thread.unsettle commands, projected into settledOverride + settledAt)
  * wins in both directions; without one, a thread can auto-settle on a
- * merged PR, always settles on a closed PR, or settles on inactivity past
- * the window. An open PR blocks the inactivity path entirely. The server
+ * merged PR or always on a closed PR (both only when the terminal state is
+ * not older than the thread itself, see changeRequestAutoSettles), or
+ * settles on inactivity past the window.
+ * An open PR blocks the inactivity path entirely. The server
  * un-settles on real activity (user message, session start, approval/
  * user-input request), so an override never goes stale silently.
  */
@@ -241,7 +273,7 @@ export function effectiveSettled(
     readonly now: string;
     readonly autoSettleAfterDays: number | null;
     readonly autoSettleOnMerge?: boolean;
-    readonly changeRequestState?: ChangeRequestStateLike | null;
+    readonly changeRequest?: ChangeRequestSettleSource | null;
   },
 ): boolean {
   // Blocked work must remain visible even when a user explicitly settled it.
@@ -267,14 +299,19 @@ export function effectiveSettled(
   // "active" is the explicit keep-active pin: it suppresses auto-settle
   // until real activity clears it server-side.
   if (shell.settledOverride === "active") return false;
-  if (changeRequestAutoSettles(options.changeRequestState, options.autoSettleOnMerge !== false)) {
+  if (
+    changeRequestAutoSettles(options.changeRequest, {
+      autoSettleOnMerge: options.autoSettleOnMerge,
+      threadCreatedAt: shell.createdAt,
+    })
+  ) {
     return true;
   }
   // An open PR is unfinished business regardless of how long the thread has
   // been quiet: review can take days, and hiding the thread would bury the
   // work waiting on it. A configured merge, a close, or an explicit user
   // settle resolves it.
-  if (options.changeRequestState === "open") return false;
+  if (options.changeRequest?.state === "open") return false;
   if (options.autoSettleAfterDays === null) return false;
 
   const lastActivityAt = threadLastActivityAt(shell);
