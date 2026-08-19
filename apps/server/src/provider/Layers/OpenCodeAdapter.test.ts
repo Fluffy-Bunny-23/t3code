@@ -1441,4 +1441,115 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(closeCallsDuringRun, []);
     }),
   );
+
+  it.effect("completes the running turn on the OpenCode session.idle event", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-session-idle");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "do a thing",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+
+      const completionsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      runtimeMock.state.subscribedEvents.push(
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "busy" },
+          },
+        },
+        {
+          type: "session.idle",
+          properties: { sessionID: "http://127.0.0.1:9999/session" },
+        },
+      );
+
+      const completions = Array.from(
+        yield* Fiber.join(completionsFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(completions.length, 1);
+      NodeAssert.equal(completions[0]?.type, "turn.completed");
+      if (completions[0]?.type === "turn.completed") {
+        NodeAssert.equal(String(completions[0].turnId), String(turn.turnId));
+      }
+
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.status, "ready");
+      NodeAssert.equal(session?.activeTurnId, undefined);
+    }),
+  );
+
+  it.effect("does not leave the session stuck running across a subagent busy->idle cycle", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-subagent-idle");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "delegate to a subagent",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+
+      const completionsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      // Main turn, then a background subagent continuation: each runs through
+      // its own busy->idle cycle. The first idle closes the turn; the second
+      // idle must still return the session to ready instead of leaving it
+      // "running" forever (the pre-fix behaviour).
+      runtimeMock.state.subscribedEvents.push(
+        {
+          type: "session.status",
+          properties: { sessionID: "http://127.0.0.1:9999/session", status: { type: "busy" } },
+        },
+        { type: "session.idle", properties: { sessionID: "http://127.0.0.1:9999/session" } },
+        {
+          type: "session.status",
+          properties: { sessionID: "http://127.0.0.1:9999/session", status: { type: "busy" } },
+        },
+        { type: "session.idle", properties: { sessionID: "http://127.0.0.1:9999/session" } },
+      );
+
+      const completions = Array.from(
+        yield* Fiber.join(completionsFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(completions.length, 2);
+
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.status, "ready");
+      NodeAssert.equal(session?.activeTurnId, undefined);
+    }),
+  );
 });
