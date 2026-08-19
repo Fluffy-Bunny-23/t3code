@@ -245,9 +245,10 @@ interface OpenCodeSessionContext {
   openTurnId: TurnId | undefined;
   /**
    * True once `turn.completed` has been emitted for the current busy->idle
-   * cycle of `openTurnId`. Reset on busy so paired idle signals (the legacy
-   * `session.status: idle` and the newer `session.idle` event) and repeated
-   * subagent cycles each complete at most once.
+   * cycle of `openTurnId`. Re-armed only by a real busy event, so paired idle
+   * signals (the legacy `session.status: idle` and the newer `session.idle`
+   * event) and repeated subagent cycles each complete at most once, and a
+   * stale idle that lags a sendTurn cannot complete the fresh turn.
    */
   turnCompletionSent: boolean;
   activeAgent: string | undefined;
@@ -849,22 +850,28 @@ export function makeOpenCodeAdapter(
         if (completedTurnId === undefined) {
           return;
         }
-        context.activeTurnId = undefined;
-        yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
-        if (!context.turnCompletionSent) {
-          context.turnCompletionSent = true;
-          yield* emit({
-            ...(yield* buildEventBase({
-              threadId: context.session.threadId,
-              turnId: completedTurnId,
-              raw: event,
-            })),
-            type: "turn.completed",
-            payload: {
-              state: "completed",
-            },
-          });
+        // A completion for this open turn was already emitted this busy cycle.
+        // That covers both the paired `session.status: idle` + `session.idle`
+        // notifications and a stale idle that lags behind a sendTurn opened
+        // between them — ignore it entirely (including the state clear) so it
+        // cannot tear down the new turn.
+        if (context.turnCompletionSent) {
+          return;
         }
+        context.activeTurnId = undefined;
+        context.turnCompletionSent = true;
+        yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
+        yield* emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId: completedTurnId,
+            raw: event,
+          })),
+          type: "turn.completed",
+          payload: {
+            state: "completed",
+          },
+        });
       });
 
       switch (event.type) {
@@ -1525,7 +1532,10 @@ export function makeOpenCodeAdapter(
 
       context.activeTurnId = turnId;
       context.openTurnId = turnId;
-      context.turnCompletionSent = false;
+      // Deliberately does not re-arm `turnCompletionSent`: a sendTurn between
+      // the paired `session.status: idle` / `session.idle` notifications must
+      // not let the stale second idle complete the fresh turn. Only a real
+      // busy event re-arms it.
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
       context.activeVariant = variant;
       yield* updateProviderSession(
