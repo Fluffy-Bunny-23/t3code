@@ -74,26 +74,29 @@ const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSetti
   const providerInstances: Record<string, ProviderInstanceConfig> = {};
   for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
     const config = instance.config;
+    // Only fold boolean flags: a malformed `enabled` (e.g. `"false"`) must
+    // stay in the blob so driver schema validation flags it instead of the
+    // fold silently repairing the config.
     if (
       config === null ||
       typeof config !== "object" ||
       Array.isArray(config) ||
-      !("enabled" in config)
+      typeof (config as { readonly enabled?: unknown }).enabled !== "boolean"
     ) {
       providerInstances[instanceId] = instance;
       continue;
     }
-    const { enabled: configEnabled, ...restConfig } = config as Record<string, unknown>;
+    const { enabled: configEnabled, ...restConfig } = config as Record<string, unknown> & {
+      readonly enabled: boolean;
+    };
     const resolved =
-      typeof configEnabled === "boolean"
-        ? instance.enabled === false || configEnabled === false
-          ? false
-          : (instance.enabled ?? configEnabled)
-        : instance.enabled;
+      instance.enabled === false || configEnabled === false
+        ? false
+        : (instance.enabled ?? configEnabled);
     changed = true;
     providerInstances[instanceId] = {
       ...instance,
-      ...(resolved === undefined ? {} : { enabled: resolved }),
+      enabled: resolved,
       config: restConfig,
     } satisfies ProviderInstanceConfig;
   }

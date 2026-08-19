@@ -496,7 +496,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       // The explicit false must win so a user's disable sticks.
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        '{"providerInstances":{"grok":{"driver":"grok","enabled":true,"config":{"enabled":false}},"codex_work":{"driver":"codex","config":{"enabled":true,"homePath":"~/.codex"}}}}',
+        '{"providerInstances":{"grok":{"driver":"grok","enabled":true,"config":{"enabled":false}},"codex_work":{"driver":"codex","config":{"enabled":true,"homePath":"~/.codex"}},"cursor":{"driver":"cursor","config":{"enabled":"nope"}}}}',
       );
 
       const settings = yield* serverSettings.getSettings;
@@ -513,6 +513,12 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         driver: ProviderDriverKind.make("codex"),
         enabled: true,
         config: { homePath: "~/.codex" },
+      });
+      // A malformed flag is left alone so driver schema validation can
+      // surface it instead of the fold silently repairing the config.
+      assert.deepEqual(settings.providerInstances[ProviderInstanceId.make("cursor")], {
+        driver: ProviderDriverKind.make("cursor"),
+        config: { enabled: "nope" },
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
