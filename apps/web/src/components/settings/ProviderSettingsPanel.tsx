@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
+  resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
@@ -838,7 +839,7 @@ export function EnvironmentProviderSettings({
                   }))
                 }
                 onUpdate={(next) => {
-                  const wasEnabled = row.instance.enabled ?? true;
+                  const wasEnabled = resolveProviderInstanceEnabled(row.instance);
                   const isDisabling = next.enabled === false && wasEnabled;
                   const shouldClearTextGen = isDisabling && textGenInstanceId === row.instanceId;
                   if (shouldClearTextGen) {
