@@ -2373,6 +2373,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             }
             contentContainerStyle={{
               paddingTop: 12,
+              paddingBottom: 12,
               paddingHorizontal: contentHorizontalPadding,
             }}
           />
