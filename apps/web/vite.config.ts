@@ -152,10 +152,31 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .filter((entry) => entry.length > 0);
 const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
-export default defineConfig(() => {
+function hostedHtmlTitlePlugin(channel: string, mode: string): Plugin {
+  return {
+    name: "t3code:hosted-html-title",
+    transformIndexHtml(html) {
+      const normalized = channel.trim().toLowerCase();
+      let title: string;
+      if (normalized === "latest") {
+        title = "T3 Code";
+      } else if (normalized === "nightly") {
+        title = "T3 Code (Nightly)";
+      } else if (mode === "development") {
+        title = "T3 Code (Dev)";
+      } else {
+        title = "T3 Code (Alpha)";
+      }
+      return html.replace(/<title>.*?<\/title>/, `<title>${title}</title>`);
+    },
+  };
+}
+
+export default defineConfig(({ mode }) => {
   return {
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      hostedHtmlTitlePlugin(configuredHostedAppChannel, mode),
       devCompressionPlugin(),
       // Route components load as split chunks so settings, pull-request, and
       // usage code stay out of the cold-start payload; the router prefetches
