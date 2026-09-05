@@ -153,7 +153,7 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .filter((entry) => entry.length > 0);
 const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
-function hostedHtmlTitlePlugin(channel: string, mode: string): Plugin {
+function hostedHtmlTitlePlugin(channel: string, isDev: boolean): Plugin {
   return {
     name: "t3code:hosted-html-title",
     transformIndexHtml(html) {
@@ -163,7 +163,7 @@ function hostedHtmlTitlePlugin(channel: string, mode: string): Plugin {
         title = "T3 Code";
       } else if (normalized === "nightly") {
         title = "T3 Code (Nightly)";
-      } else if (mode === "development") {
+      } else if (isDev) {
         title = "T3 Code (Dev)";
       } else {
         title = "T3 Code (Alpha)";
@@ -173,11 +173,11 @@ function hostedHtmlTitlePlugin(channel: string, mode: string): Plugin {
   };
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command }) => {
   return {
     assetsInclude: ["**/*.wasm"],
     plugins: [
-      hostedHtmlTitlePlugin(configuredHostedAppChannel, mode),
+      hostedHtmlTitlePlugin(configuredHostedAppChannel, command === "serve"),
       devCompressionPlugin(),
       thirdPartyLicensesPlugin({
         bundleName: "web",
