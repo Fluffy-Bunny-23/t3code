@@ -63,6 +63,8 @@ import * as Option from "effect/Option";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
 
+const OPENCODE_MCP_ADD_TIMEOUT = "10 seconds";
+
 /**
  * Version tag stamped into the OpenCode resume cursor. Bump if the cursor
  * shape changes so stale-shaped cursors written by older builds are ignored
@@ -2859,23 +2861,28 @@ export function makeOpenCodeAdapter(
                 if (!mcpSession || server.external) {
                   return undefined;
                 }
-                const added = yield* runOpenCodeSdk("mcp.add", () =>
-                  client.mcp.add({
-                    name: "t3-code",
-                    config: {
-                      type: "remote",
-                      url: mcpSession.endpoint,
-                      headers: {
-                        Authorization: mcpSession.authorizationHeader,
+                const added = yield* runOpenCodeSdk("mcp.add", (signal) =>
+                  client.mcp.add(
+                    {
+                      name: "t3-code",
+                      config: {
+                        type: "remote",
+                        url: mcpSession.endpoint,
+                        headers: {
+                          Authorization: mcpSession.authorizationHeader,
+                        },
+                        oauth: false,
                       },
-                      oauth: false,
                     },
-                  }),
-                ).pipe(Effect.result);
+                    { signal },
+                  ),
+                ).pipe(Effect.timeout(OPENCODE_MCP_ADD_TIMEOUT), Effect.result);
                 if (Result.isFailure(added)) {
-                  const detail = OpenCodeRuntimeError.is(added.failure)
-                    ? added.failure.detail
-                    : openCodeRuntimeErrorDetail(added.failure);
+                  const detail = Cause.isTimeoutError(added.failure)
+                    ? `timed out after ${OPENCODE_MCP_ADD_TIMEOUT}`
+                    : OpenCodeRuntimeError.is(added.failure)
+                      ? added.failure.detail
+                      : openCodeRuntimeErrorDetail(added.failure);
                   return `registration request failed (${detail})`;
                 }
                 const status = added.success.data?.["t3-code"];

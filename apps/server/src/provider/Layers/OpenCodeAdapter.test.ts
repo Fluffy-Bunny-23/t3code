@@ -134,7 +134,10 @@ const runtimeMock = {
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
     forkCalls: [] as Array<{ sessionID: string; directory?: string; messageID?: string }>,
     mcpAddCalls: [] as Array<unknown>,
-    mcpAddImplementation: null as ((input: unknown) => Promise<unknown>) | null,
+    mcpAddSignals: [] as Array<AbortSignal>,
+    mcpAddImplementation: null as
+      | ((input: unknown, options?: { signal?: AbortSignal }) => Promise<unknown>)
+      | null,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -193,6 +196,7 @@ const runtimeMock = {
     this.state.sessionUpdateCalls.length = 0;
     this.state.forkCalls.length = 0;
     this.state.mcpAddCalls.length = 0;
+    this.state.mcpAddSignals.length = 0;
     this.state.mcpAddImplementation = null;
   },
 };
@@ -518,10 +522,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
       },
       mcp: {
-        add: async (input: unknown) => {
+        add: async (input: unknown, options?: { signal?: AbortSignal }) => {
           runtimeMock.state.mcpAddCalls.push(input);
+          if (options?.signal) runtimeMock.state.mcpAddSignals.push(options.signal);
           if (runtimeMock.state.mcpAddImplementation) {
-            return await runtimeMock.state.mcpAddImplementation(input);
+            return await runtimeMock.state.mcpAddImplementation(input, options);
           }
           return { data: { "t3-code": { status: "connected" } } };
         },
@@ -702,6 +707,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       );
       NodeAssert.equal(session.threadId, threadId);
       NodeAssert.deepEqual(runtimeMock.state.mcpAddCalls, []);
+      NodeAssert.deepEqual(runtimeMock.state.mcpAddSignals, []);
       yield* adapter.stopSession(threadId);
     }),
   );
@@ -7800,6 +7806,9 @@ it.layer(OpenCodeAdapterLocalServerTestLayer)("OpenCodeAdapterPreviewRegistratio
           },
         },
       ]);
+      NodeAssert.equal(runtimeMock.state.mcpAddSignals.length, 1);
+      NodeAssert.equal(runtimeMock.state.mcpAddSignals[0] instanceof AbortSignal, true);
+      NodeAssert.equal(runtimeMock.state.mcpAddSignals[0]?.aborted, false);
       const events = Array.from(yield* Fiber.join(eventsFiber));
       NodeAssert.equal(
         events.some((event) => event.type === "runtime.warning"),
@@ -7875,6 +7884,52 @@ it.layer(OpenCodeAdapterLocalServerTestLayer)("OpenCodeAdapterPreviewRegistratio
       NodeAssert.match(
         String(warning?.type === "runtime.warning" ? warning.payload.detail : ""),
         /boom/,
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("starts the session and aborts signal when preview registration times out", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-mcp-add-times-out");
+      let signalReceived: AbortSignal | undefined;
+      runtimeMock.state.mcpAddImplementation = async (_input, options) => {
+        signalReceived = options?.signal;
+        await new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            reject(new Error("operation aborted"));
+          });
+        });
+        return { data: { "t3-code": { status: "connected" } } };
+      };
+      yield* setTestMcpProviderSession(threadId);
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const sessionFiber = yield* Effect.ensuring(
+        adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        }),
+        clearTestMcpProviderSession(threadId),
+      ).pipe(Effect.forkChild);
+      yield* advanceTestClock(10_000);
+      const session = yield* Fiber.join(sessionFiber);
+      NodeAssert.equal(session.threadId, threadId);
+      NodeAssert.equal(runtimeMock.state.mcpAddCalls.length, 1);
+      NodeAssert.equal(signalReceived instanceof AbortSignal, true);
+      NodeAssert.equal(signalReceived?.aborted, true);
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const warning = events.find((event) => event.type === "runtime.warning");
+      NodeAssert.equal(warning?.type, "runtime.warning");
+      NodeAssert.match(
+        String(warning?.type === "runtime.warning" ? warning.payload.detail : ""),
+        /timed out/,
       );
       yield* adapter.stopSession(threadId);
     }),
