@@ -68,6 +68,10 @@ import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
+import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
+import { CodexInstallation } from "../CodexInstallation.ts";
+import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -111,7 +115,10 @@ export type CodexDriverEnv =
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
-  | ServerSettingsService;
+  | ServerSettingsService
+  | ServerSecretStore
+  | ServerEnvironmentIdentity
+  | CodexInstallation;
 
 export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -123,6 +130,15 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   defaultConfig: (): CodexSettings => decodeCodexSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
+      if (config.setupMode === "managed")
+        return yield* makeManagedCodexProvider({
+          instanceId,
+          displayName,
+          accentColor,
+          environment,
+          enabled,
+          config,
+        });
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -171,18 +187,6 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
           Effect.provideService(Path.Path, pathService),
         ),
       );
-
-      // `makeCodexAdapter` and `makeCodexTextGeneration` have `never` error
-      // channels at construction time — their failure modes are all on the
-      // per-operation closures they return. No `mapError` wrapper is needed
-      // here; the registry only has to worry about snapshot-build and
-      // spawner-availability failures surfaced from `checkCodexProviderStatus`
-      // below.
-      const adapter = yield* makeCodexAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
 
       // Build a managed snapshot whose settings never change — mutations come
       // in as instance rebuilds from the registry rather than in-place
@@ -238,11 +242,20 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
             }),
         ),
       );
-      const textGeneration = yield* makeCodexTextGeneration(
-        effectiveConfig,
-        processEnv,
-        snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
-      );
+      const models = snapshot.getSnapshot.pipe(Effect.map((value) => value.models));
+      // `makeCodexAdapter` and `makeCodexTextGeneration` have `never` error
+      // channels at construction time — their failure modes are all on the
+      // per-operation closures they return. No `mapError` wrapper is needed
+      // here; the registry only has to worry about snapshot-build and
+      // spawner-availability failures surfaced from `checkCodexProviderStatus`
+      // above.
+      const adapter = yield* makeCodexAdapter(effectiveConfig, {
+        instanceId,
+        environment: processEnv,
+        models,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      });
+      const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv, models);
       const snapshotForCwd = (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot

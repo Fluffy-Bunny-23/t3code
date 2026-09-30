@@ -571,6 +571,7 @@ export function runtimeEventToActivities(
           summary: "Runtime error",
           payload: {
             message: truncateDetail(event.payload.message),
+            ...(event.payload.code ? { code: event.payload.code } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -2671,17 +2672,16 @@ const make = Effect.gen(function* () {
     (source: string, event: { readonly eventId: string; readonly type: string }) =>
     <E, R>(effect: Effect.Effect<void, E, R>) =>
       effect.pipe(
-        Effect.catchCause((cause) => {
-          if (Cause.hasInterruptsOnly(cause)) {
-            return Effect.failCause(cause);
-          }
-          return Effect.logWarning("provider runtime ingestion failed to process event", {
-            source,
-            eventId: event.eventId,
-            eventType: event.type,
-            cause: Cause.pretty(cause),
-          });
-        }),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("provider runtime ingestion failed to process event", {
+              source,
+              eventId: event.eventId,
+              eventType: event.type,
+              cause: Cause.pretty(cause),
+            }),
+        ),
       );
 
   const worker = yield* makeDrainableWorker((input: RuntimeIngestionInput) =>
