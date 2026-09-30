@@ -789,6 +789,77 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("working");
   });
 
+  it("reports working for a running turn when the session projection lags", () => {
+    const runningTurn = {
+      turnId: "turn-1" as never,
+      state: "running" as const,
+      assistantMessageId: null,
+      requestedAt: "2026-03-09T10:00:00.000Z",
+      startedAt: "2026-03-09T10:00:00.000Z",
+      completedAt: null,
+    };
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session: { ...session, status: "ready" as const, activeTurnId: null },
+        latestTurn: runningTurn,
+      }),
+    ).toBe("working");
+    expect(resolveSidebarThreadStatus({ ...idle, session: null, latestTurn: runningTurn })).toBe(
+      "working",
+    );
+  });
+
+  it("prefers failure and terminal states over a stale running turn", () => {
+    const runningTurn = {
+      turnId: "turn-1" as never,
+      state: "running" as const,
+      assistantMessageId: null,
+      requestedAt: "2026-03-09T10:00:00.000Z",
+      startedAt: "2026-03-09T10:00:00.000Z",
+      completedAt: null,
+    };
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session: { ...session, status: "error" as const, lastError: "boom" },
+        latestTurn: runningTurn,
+      }),
+    ).toBe("failed");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session: { ...session, status: "stopped" as const, activeTurnId: null },
+        latestTurn: runningTurn,
+      }),
+    ).toBe("ready");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session: { ...session, status: "interrupted" as const, activeTurnId: null },
+        latestTurn: runningTurn,
+      }),
+    ).toBe("ready");
+  });
+
+  it("keeps approval and input above a lagging running turn", () => {
+    const runningTurn = {
+      turnId: "turn-1" as never,
+      state: "running" as const,
+      assistantMessageId: null,
+      requestedAt: "2026-03-09T10:00:00.000Z",
+      startedAt: "2026-03-09T10:00:00.000Z",
+      completedAt: null,
+    };
+    const lagged = {
+      ...idle,
+      session: { ...session, status: "ready" as const, activeTurnId: null },
+      latestTurn: runningTurn,
+    };
+    expect(resolveSidebarThreadStatus({ ...lagged, hasPendingApprovals: true })).toBe("approval");
+    expect(resolveSidebarThreadStatus({ ...lagged, hasPendingUserInput: true })).toBe("input");
+  });
+
   it("reports failed only while the session status is error", () => {
     expect(
       resolveSidebarThreadStatus({
@@ -2004,6 +2075,78 @@ describe("resolveThreadStatusPill", () => {
         thread: baseThread,
       }),
     ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows working for a running turn when the session projection lags", () => {
+    const runningTurn = {
+      turnId: "turn-1" as never,
+      state: "running" as const,
+      assistantMessageId: null,
+      requestedAt: "2026-03-09T10:00:00.000Z",
+      startedAt: "2026-03-09T10:00:00.000Z",
+      completedAt: null,
+    };
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: runningTurn,
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            activeTurnId: null,
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: runningTurn,
+          session: {
+            ...baseThread.session,
+            status: "starting",
+            activeTurnId: null,
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: runningTurn,
+          session: null,
+        },
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("never masks an error or terminal session with a stale running turn", () => {
+    const runningTurn = {
+      turnId: "turn-1" as never,
+      state: "running" as const,
+      assistantMessageId: null,
+      requestedAt: "2026-03-09T10:00:00.000Z",
+      startedAt: "2026-03-09T10:00:00.000Z",
+      completedAt: null,
+    };
+    for (const status of ["error", "stopped", "interrupted"] as const) {
+      expect(
+        resolveThreadStatusPill({
+          thread: {
+            ...baseThread,
+            latestTurn: runningTurn,
+            session: {
+              ...baseThread.session,
+              status,
+              activeTurnId: null,
+            },
+          },
+        }),
+      ).not.toMatchObject({ label: "Working" });
+    }
   });
 
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {

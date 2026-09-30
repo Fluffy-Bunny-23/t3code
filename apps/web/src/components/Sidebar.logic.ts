@@ -6,7 +6,12 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type {
+  ContextMenuItem,
+  EnvironmentId,
+  OrchestrationSessionStatus,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/unstable/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
@@ -801,7 +806,9 @@ export function shouldRecedeSidebarThread(input: {
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
->;
+> & {
+  latestTurn?: SidebarThreadSummary["latestTurn"];
+};
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals) {
@@ -810,13 +817,32 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.hasPendingUserInput) {
     return "input";
   }
-  if (thread.session?.status === "running" || thread.session?.status === "starting") {
+  // Read once: later branches narrow on this instead of re-accessing
+  // thread.session. Typed as the full status union (not narrowed) so the
+  // lag-window check below stays typo-checked without tripping no-overlap
+  // errors from the early returns above.
+  const sessionStatus: OrchestrationSessionStatus | null = thread.session?.status ?? null;
+  if (sessionStatus === "running" || sessionStatus === "starting") {
     return "working";
   }
   // A failed session outranks lingering background liveness: the user must
   // see the failure, not a stale Working (review finding).
-  if (thread.session?.status === "error") {
+  if (sessionStatus === "error") {
     return "failed";
+  }
+  // The session projection can lag behind the turn projection on start
+  // (provider session.started/thread.started can overwrite the optimistic
+  // "starting" with "ready" before turn.started arrives). A running turn
+  // means the thread is working — but only inside the lag window (no
+  // session yet, or a non-terminal ready session; "starting" already
+  // returned above). A running turn alongside an error or terminal
+  // (stopped/interrupted) session is stale and must not mask the failure
+  // or read as live work.
+  if (
+    thread.latestTurn?.state === "running" &&
+    (sessionStatus === null || sessionStatus === "ready")
+  ) {
+    return "working";
   }
   // Background work outlives the turn: fleets read as working; monitoring
   // only when watch loops are the sole live work.
@@ -997,6 +1023,25 @@ export function resolveThreadStatusPill(input: {
   }
 
   if (thread.session?.status === "running") {
+    return {
+      label: "Working",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  // Same session-lag fallback as resolveSidebarThreadStatus: a running turn
+  // reads as Working — but only inside the lag window (no session yet, or a
+  // non-terminal ready/starting session). It outranks Connecting so a
+  // started thread never looks merely dial-up, and never masks an error or
+  // terminal session with stale work.
+  if (
+    thread.latestTurn?.state === "running" &&
+    (thread.session == null ||
+      thread.session.status === "ready" ||
+      thread.session.status === "starting")
+  ) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
