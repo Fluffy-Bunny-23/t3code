@@ -3013,12 +3013,20 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const applyPermissionRules = (
           state: OpenCodeThreadState,
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined,
+          nativeParentId: string | undefined,
         ) =>
           Effect.gen(function* () {
             // A native subagent session carries the parent's rules plus the
             // restrictions of its own agent, so the parent policy must not
-            // overwrite them.
-            if (runtimePolicy === undefined || state.parentSubagent !== null) return;
+            // overwrite them. The in-memory marker is gone after a server
+            // restart, so the native parent id is the durable signal.
+            if (
+              runtimePolicy === undefined ||
+              state.parentSubagent !== null ||
+              nativeParentId !== undefined
+            ) {
+              return;
+            }
             const rules = openCodePermissionRules(runtimePolicy);
             if (permissionRulesEqual(state.appliedPermissionRules, rules)) return;
             yield* sdkCall("session.update", { sessionID: state.nativeSessionId }, () =>
@@ -3108,7 +3116,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 updatedAt: dateTimeFromEpoch(nativeSession.time.updated, resumedAt),
               };
               const state = registerThread(nativeSession, providerThread, null);
-              yield* applyPermissionRules(state, threadInput.runtimePolicy);
+              yield* applyPermissionRules(state, threadInput.runtimePolicy, nativeSession.parentID);
               return providerThread;
             }).pipe(
               Effect.mapError(
