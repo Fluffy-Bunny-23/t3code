@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
+import type { OpencodeClient, PermissionRuleset, ToolPart } from "@opencode-ai/sdk/v2";
 import {
   CheckpointId,
   NodeId,
@@ -2755,6 +2755,74 @@ describe("OpenCodeAdapterV2", () => {
       action: "allow",
     });
   });
+
+  it.effect("reapplies the runtime mode permission rules when a session is resumed", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const createdPermissions: Array<unknown> = [];
+      const updatedPermissions: Array<unknown> = [];
+      const instanceId = ProviderInstanceId.make("opencode-resume-policy");
+      const threadId = ThreadId.make("thread-opencode-resume-policy");
+      const modelSelection = {
+        instanceId,
+        model: "anthropic/claude-sonnet",
+        options: [],
+      };
+      const adapter = yield* makeOpenCodeAdapterV2({
+        instanceId,
+        settings: OPEN_CODE_TEST_SETTINGS,
+        environment: {},
+      }).pipe(
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
+          connectToOpenCodeServer: () =>
+            Effect.succeed({ url: "http://test.invalid", external: true }),
+          createOpenCodeSdkClient: () => ({
+            event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+            session: {
+              create: async (input: { permission?: unknown }) => {
+                createdPermissions.push(input.permission);
+                return { data: { id: "root", time: { created: 1, updated: 1 } } };
+              },
+              update: async (input: { permission?: unknown }) => {
+                updatedPermissions.push(input.permission);
+                return { data: true };
+              },
+              get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            },
+          }),
+        } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
+        Effect.provideService(ProviderHost.ProviderHost, {
+          paths: { cwd: "/workspace" },
+          resolveAttachmentPath: () => null,
+        } as unknown as ProviderHost.ProviderHost["Service"]),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("session-opencode-resume-policy"),
+        modelSelection,
+        runtimePolicy: runtimePolicy("approval-required", { cwd: "/workspace" }),
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: runtimePolicy("approval-required", { cwd: "/workspace" }),
+      });
+      assert.equal(permissionAction(createdPermissions[0] as PermissionRuleset, "bash"), "ask");
+
+      yield* runtime.resumeThread({
+        providerThread,
+        threadId,
+        modelSelection,
+        runtimePolicy: runtimePolicy("full-access", { cwd: "/workspace" }),
+      });
+
+      assert.equal(updatedPermissions.length, 1);
+      assert.equal(permissionAction(updatedPermissions[0] as PermissionRuleset, "bash"), "allow");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
 
   it("preserves OpenCode's recursion guard on task-created child sessions", () => {
     const childRules = openCodeChildPermissionRules(runtimePolicy("full-access"), [
