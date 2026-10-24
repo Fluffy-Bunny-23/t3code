@@ -5,6 +5,7 @@ import {
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
@@ -283,14 +284,7 @@ export const layer: Layer.Layer<
                   source.id === handoff.targetRunId &&
                   (source.status === "failed" ||
                     source.status === "interrupted" ||
-                    (source.status === "completed" &&
-                      handoff.delivery === undefined &&
-                      projection.messages.some(
-                        (message) =>
-                          message.id === source.userMessageId &&
-                          message.attachments.length === 0 &&
-                          message.text.trim().toLowerCase() === "/compact",
-                      ))),
+                    (source.status === "completed" && handoff.delivery === undefined)),
               ))),
       );
       const nativeForkTransfer = projection.contextTransfers.find(
@@ -1159,6 +1153,21 @@ export const layer: Layer.Layer<
         (legacyInputRunIds.size > 0 &&
           sameNativeThread &&
           !acceptedAttempts.some((source) => source.nativeThreadId !== undefined));
+      // A turn in this native thread is not enough: another provider's handoff
+      // may contain work the native transcript has never seen.
+      const handoffIsAlreadyInNativeThread = (handoff: OrchestrationV2ContextHandoff) =>
+        handoff.fromProviderThreadIds.includes(providerThread.id) &&
+        handoff.history !== undefined &&
+        handoff.history.messages.length > 0 &&
+        handoff.history.omittedItems === 0 &&
+        (handoff.history.omittedItemIds?.length ?? 0) === 0 &&
+        handoff.history.messages.every(
+          (historical) =>
+            historical.threadId === projection.thread.id &&
+            historical.providerThreadId === providerThread.id &&
+            historical.runId !== null &&
+            nativeInputRunIds.has(historical.runId),
+        );
       const missedRuns = projection.runs.filter(
         (source) =>
           source.ordinal < run.ordinal &&
@@ -1201,10 +1210,16 @@ export const layer: Layer.Layer<
                     createdAt: yield* DateTime.now,
                   }),
                 ];
+          const handoffsToDeliver = [...effectiveHandoffs, ...retryHandoff];
           const delivery = yield* deliverContextHandoffs({
-            handoffs: [...effectiveHandoffs, ...retryHandoff],
+            handoffs: handoffsToDeliver,
             deferInline: compact,
-            deferIfOverBudget: sameNativeThread && nativeThreadHasTurns,
+            deferIfOverBudget:
+              sameNativeThread &&
+              nativeThreadHasTurns &&
+              missedItems.length === 0 &&
+              handoffsToDeliver.length > 0 &&
+              handoffsToDeliver.every(handoffIsAlreadyInNativeThread),
             providerThread: runningProviderThread,
             budget: Effect.gen(function* () {
               return handoffBudget({
