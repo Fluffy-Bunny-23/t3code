@@ -1174,14 +1174,11 @@ export const layer: Layer.Layer<
         sourceItemsById: ReadonlyMap<string, OrchestrationV2TurnItem>,
       ) => {
         const history = handoff.history;
-        if (
-          !handoff.fromProviderThreadIds.includes(providerThread.id) ||
-          history === undefined ||
-          history.messages.length === 0
-        )
+        if (!handoff.fromProviderThreadIds.includes(providerThread.id) || history === undefined)
           return false;
         const omittedItemIds = history.omittedItemIds ?? [];
         return (
+          (history.messages.length > 0 || omittedItemIds.length > 0) &&
           history.omittedItems === omittedItemIds.length &&
           history.messages.every(itemIsInNativeThread) &&
           omittedItemIds.every((itemId) => {
