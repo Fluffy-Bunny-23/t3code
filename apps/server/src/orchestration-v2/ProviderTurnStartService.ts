@@ -1109,11 +1109,16 @@ export const layer: Layer.Layer<
           )
           .map((source) => source.id),
       );
+      let turnStartHistory: ReadonlyArray<OrchestrationV2TurnItem> | undefined;
+      const loadTurnStartHistory = Effect.gen(function* () {
+        turnStartHistory ??= yield* projectionStore.getTurnStartHistory(input.threadId);
+        return turnStartHistory;
+      });
       // Legacy attempts lack native identity; exclude their explicitly recovered history, whose
       // attachments were not replayed into the replacement thread.
       const nativeContextEstimate = Effect.gen(function* () {
         return sameNativeThread
-          ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
+          ? (yield* loadTurnStartHistory).reduce((sum, item) => {
               if (
                 item.runId === run.id ||
                 (item.runId !== null &&
@@ -1155,19 +1160,36 @@ export const layer: Layer.Layer<
           !acceptedAttempts.some((source) => source.nativeThreadId !== undefined));
       // A turn in this native thread is not enough: another provider's handoff
       // may contain work the native transcript has never seen.
-      const handoffIsAlreadyInNativeThread = (handoff: OrchestrationV2ContextHandoff) =>
-        handoff.fromProviderThreadIds.includes(providerThread.id) &&
-        handoff.history !== undefined &&
-        handoff.history.messages.length > 0 &&
-        handoff.history.omittedItems === 0 &&
-        (handoff.history.omittedItemIds?.length ?? 0) === 0 &&
-        handoff.history.messages.every(
-          (historical) =>
-            historical.threadId === projection.thread.id &&
-            historical.providerThreadId === providerThread.id &&
-            historical.runId !== null &&
-            nativeInputRunIds.has(historical.runId),
+      const itemIsInNativeThread = (item: {
+        readonly threadId: string;
+        readonly providerThreadId: string | null;
+        readonly runId: string | null;
+      }) =>
+        item.threadId === projection.thread.id &&
+        item.providerThreadId === providerThread.id &&
+        item.runId !== null &&
+        nativeInputRunIds.has(item.runId);
+      const handoffIsAlreadyInNativeThread = (
+        handoff: OrchestrationV2ContextHandoff,
+        sourceItemsById: ReadonlyMap<string, OrchestrationV2TurnItem>,
+      ) => {
+        const history = handoff.history;
+        if (
+          !handoff.fromProviderThreadIds.includes(providerThread.id) ||
+          history === undefined ||
+          history.messages.length === 0
+        )
+          return false;
+        const omittedItemIds = history.omittedItemIds ?? [];
+        return (
+          history.omittedItems === omittedItemIds.length &&
+          history.messages.every(itemIsInNativeThread) &&
+          omittedItemIds.every((itemId) => {
+            const item = sourceItemsById.get(itemId);
+            return item !== undefined && itemIsInNativeThread(item);
+          })
         );
+      };
       const missedRuns = projection.runs.filter(
         (source) =>
           source.ordinal < run.ordinal &&
@@ -1211,15 +1233,24 @@ export const layer: Layer.Layer<
                   }),
                 ];
           const handoffsToDeliver = [...effectiveHandoffs, ...retryHandoff];
+          const canDeferHandoff =
+            sameNativeThread &&
+            nativeThreadHasTurns &&
+            missedItems.length === 0 &&
+            handoffsToDeliver.length > 0;
+          const sourceItemsById =
+            canDeferHandoff &&
+            handoffsToDeliver.some((handoff) => (handoff.history?.omittedItems ?? 0) > 0)
+              ? new Map((yield* loadTurnStartHistory).map((item) => [item.id, item] as const))
+              : new Map<string, OrchestrationV2TurnItem>();
           const delivery = yield* deliverContextHandoffs({
             handoffs: handoffsToDeliver,
             deferInline: compact,
             deferIfOverBudget:
-              sameNativeThread &&
-              nativeThreadHasTurns &&
-              missedItems.length === 0 &&
-              handoffsToDeliver.length > 0 &&
-              handoffsToDeliver.every(handoffIsAlreadyInNativeThread),
+              canDeferHandoff &&
+              handoffsToDeliver.every((handoff) =>
+                handoffIsAlreadyInNativeThread(handoff, sourceItemsById),
+              ),
             providerThread: runningProviderThread,
             budget: Effect.gen(function* () {
               return handoffBudget({
