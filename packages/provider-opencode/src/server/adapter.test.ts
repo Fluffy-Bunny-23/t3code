@@ -239,6 +239,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 const makePermissionRuleHarness = Effect.fn("makePermissionRuleHarness")(function* (
   suffix: string,
   nativeSession: { readonly id: string; readonly parentID?: string },
+  initialMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"] = "approval-required",
 ) {
   const nativeEvents = asyncEventStream();
   const createdPermissions: Array<unknown> = [];
@@ -282,12 +283,12 @@ const makePermissionRuleHarness = Effect.fn("makePermissionRuleHarness")(functio
     threadId,
     providerSessionId: ProviderSessionId.make(`session-${suffix}`),
     modelSelection,
-    runtimePolicy: runtimePolicy("approval-required", { cwd: "/workspace" }),
+    runtimePolicy: runtimePolicy(initialMode, { cwd: "/workspace" }),
   });
   const providerThread = yield* runtime.ensureThread({
     threadId,
     modelSelection,
-    runtimePolicy: runtimePolicy("approval-required", { cwd: "/workspace" }),
+    runtimePolicy: runtimePolicy(initialMode, { cwd: "/workspace" }),
   });
   return {
     createdPermissions,
@@ -2345,6 +2346,36 @@ describe("OpenCodeAdapterV2", () => {
       assert.equal(
         permissionAction(harness.updatedPermissions[0] as PermissionRuleset, "bash"),
         "allow",
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("reapplies the restricted rules when a full-access session is resumed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makePermissionRuleHarness(
+        "resume-restricted-policy",
+        { id: "root" },
+        "full-access",
+      );
+      assert.equal(
+        permissionAction(harness.createdPermissions[0] as PermissionRuleset, "bash"),
+        "allow",
+      );
+
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        threadId: harness.threadId,
+        modelSelection: harness.modelSelection,
+        runtimePolicy: runtimePolicy("approval-required", { cwd: "/workspace" }),
+      });
+
+      assert.equal(harness.updatedPermissions.length, 1);
+      assert.equal(
+        permissionAction(harness.updatedPermissions[0] as PermissionRuleset, "bash"),
+        "ask",
       );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
