@@ -48,7 +48,10 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
-import { itemIsInNativeThread as isItemInNativeThread } from "./nativeThreadHistory.ts";
+import {
+  itemIsInNativeThread as isItemInNativeThread,
+  latestNativeCompactionRunOrdinal,
+} from "./nativeThreadHistory.ts";
 import {
   knownProviderFailureMessage,
   makeProviderFailure,
@@ -1152,14 +1155,12 @@ export const layer: Layer.Layer<
           sameNativeThread &&
           !acceptedAttempts.some((source) => source.nativeThreadId !== undefined));
       const runOrdinals = new Map(projection.runs.map((source) => [source.id, source.ordinal]));
-      const latestCompactionRunOrdinal = projection.runs.reduce<number | undefined>(
-        (latest, source) =>
-          source.providerThreadId === providerThread.id &&
-          compactionMessageIds.has(source.userMessageId)
-            ? Math.max(latest ?? source.ordinal, source.ordinal)
-            : latest,
-        undefined,
-      );
+      const latestCompactionOrdinal = latestNativeCompactionRunOrdinal({
+        runs: projection.runs,
+        turnItems: projection.turnItems,
+        providerThreadId: providerThread.id,
+        compactionMessageIds,
+      });
       // A turn in this native thread is not enough: another provider's handoff
       // may contain work the native transcript has never seen.
       const itemIsInNativeThread = (item: Parameters<typeof isItemInNativeThread>[0]["item"]) =>
@@ -1169,7 +1170,7 @@ export const layer: Layer.Layer<
           providerThreadId: providerThread.id,
           acceptedRunIds: nativeInputRunIds,
           runOrdinals,
-          latestCompactionRunOrdinal,
+          latestCompactionRunOrdinal: latestCompactionOrdinal,
         });
       const handoffIsAlreadyInNativeThread = (
         handoff: OrchestrationV2ContextHandoff,

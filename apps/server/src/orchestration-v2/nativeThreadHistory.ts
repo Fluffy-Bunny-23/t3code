@@ -1,10 +1,39 @@
 import type {
   OrchestrationV2HistoricalMessage,
+  OrchestrationV2Run,
   OrchestrationV2TurnItem,
   ProviderThreadId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+
+export const latestNativeCompactionRunOrdinal = (input: {
+  readonly runs: ReadonlyArray<
+    Pick<OrchestrationV2Run, "id" | "ordinal" | "providerThreadId" | "userMessageId">
+  >;
+  readonly turnItems: ReadonlyArray<
+    Pick<OrchestrationV2TurnItem, "type" | "runId" | "providerThreadId">
+  >;
+  readonly providerThreadId: ProviderThreadId;
+  readonly compactionMessageIds: ReadonlySet<OrchestrationV2Run["userMessageId"]>;
+}) => {
+  const providerCompactionRunIds = new Set(
+    input.turnItems
+      .filter(
+        (item) => item.type === "compaction" && item.providerThreadId === input.providerThreadId,
+      )
+      .flatMap((item) => (item.runId === null ? [] : [item.runId])),
+  );
+
+  return input.runs.reduce<number | undefined>(
+    (latest, run) =>
+      run.providerThreadId === input.providerThreadId &&
+      (input.compactionMessageIds.has(run.userMessageId) || providerCompactionRunIds.has(run.id))
+        ? Math.max(latest ?? run.ordinal, run.ordinal)
+        : latest,
+    undefined,
+  );
+};
 
 type NativeHistoryItem = {
   readonly threadId: OrchestrationV2HistoricalMessage["threadId"];

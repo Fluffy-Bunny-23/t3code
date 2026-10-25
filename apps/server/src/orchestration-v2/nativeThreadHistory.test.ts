@@ -1,7 +1,59 @@
 import { expect, it } from "vite-plus/test";
-import { ProviderThreadId, RunId, ThreadId } from "@t3tools/contracts";
+import { MessageId, ProviderThreadId, RunId, ThreadId } from "@t3tools/contracts";
 
-import { itemIsInNativeThread } from "./nativeThreadHistory.ts";
+import { itemIsInNativeThread, latestNativeCompactionRunOrdinal } from "./nativeThreadHistory.ts";
+
+it("includes provider-generated compaction runs in the native history boundary", () => {
+  const providerThreadId = ProviderThreadId.make("provider-thread:compaction-history");
+  const otherProviderThreadId = ProviderThreadId.make("provider-thread:other-compaction");
+  const explicitCompactMessageId = MessageId.make("message:explicit-compact");
+  const runs = [
+    {
+      id: RunId.make("run:before-provider-compaction"),
+      ordinal: 2,
+      providerThreadId,
+      userMessageId: MessageId.make("message:ordinary-1"),
+    },
+    {
+      id: RunId.make("run:provider-compaction"),
+      ordinal: 4,
+      providerThreadId,
+      userMessageId: MessageId.make("message:ordinary-2"),
+    },
+    {
+      id: RunId.make("run:explicit-compaction"),
+      ordinal: 6,
+      providerThreadId,
+      userMessageId: explicitCompactMessageId,
+    },
+    {
+      id: RunId.make("run:other-compaction"),
+      ordinal: 8,
+      providerThreadId: otherProviderThreadId,
+      userMessageId: MessageId.make("message:other-thread"),
+    },
+  ];
+
+  expect(
+    latestNativeCompactionRunOrdinal({
+      runs,
+      turnItems: [
+        {
+          type: "compaction",
+          runId: runs[1]!.id,
+          providerThreadId,
+        },
+        {
+          type: "compaction",
+          runId: runs[3]!.id,
+          providerThreadId: otherProviderThreadId,
+        },
+      ],
+      providerThreadId,
+      compactionMessageIds: new Set([explicitCompactMessageId]),
+    }),
+  ).toBe(6);
+});
 
 it("only treats retained provider input as native transcript history", () => {
   const threadId = ThreadId.make("thread:native-history");
