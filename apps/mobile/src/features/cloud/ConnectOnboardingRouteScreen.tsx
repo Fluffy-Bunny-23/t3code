@@ -1,5 +1,7 @@
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { SheetHeader } from "../../components/ui/SheetHeader";
+import { IconButton } from "../../components/ui/IconButton";
 import { Button } from "../../components/ui/Button";
-import { Toolbar } from "../../components/ui/Toolbar";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 
 import { useAuth } from "@clerk/expo";
@@ -9,7 +11,6 @@ import { Platform, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
-import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
@@ -21,8 +22,7 @@ import { hasCloudPublicConfig } from "./publicConfig";
 export function ConnectOnboardingRouteScreen() {
   const navigation = useNavigation();
 
-  // The route is deep-linkable; without cloud config the sheet would present
-  // empty with no chrome to dismiss it, so bail back out instead.
+  // Without cloud config, deep links must exit to avoid an empty, undismissable sheet.
   useEffect(() => {
     if (hasCloudPublicConfig()) {
       return;
@@ -59,8 +59,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
     navigation.goBack();
   };
 
-  // Persist before dismissing so a quick sign-out/sign-in cannot race ahead
-  // of the preference write; the write is a local secure-store update.
+  // Persist before dismissing so quick sign-out/sign-in cannot outrun the write.
   const handleDontShowAgain = () => {
     void (async () => {
       if (userId) {
@@ -73,25 +72,31 @@ function ConfiguredConnectOnboardingRouteScreen() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <AndroidSheetHeader
-          title="Set up T3 Connect"
-          actions={[
-            {
-              accessibilityLabel: "Refresh environments",
-              disabled: isRefreshing,
-              icon: "arrow.clockwise",
-              loading: isRefreshing,
-              onPress: handleRefresh,
-            },
-            { accessibilityLabel: "Close", icon: "xmark", onPress: handleClose },
-          ]}
-        />
-      ) : (
-        <Toolbar placement="right">
-          <Toolbar.Button icon="xmark" onPress={handleClose} separateBackground />
-        </Toolbar>
-      )}
+      <SheetHeader
+        presentation={Platform.OS === "android" ? "inline" : "native"}
+        title="Set up T3 Connect"
+        onClose={handleClose}
+        trailing={
+          Platform.OS === "android" ? (
+            isRefreshing ? (
+              <View
+                className="size-12 items-center justify-center"
+                accessible
+                accessibilityLabel="Refreshing environments"
+                accessibilityState={{ busy: true }}
+              >
+                <AppActivityIndicator />
+              </View>
+            ) : (
+              <IconButton
+                accessibilityLabel="Refresh environments"
+                icon="arrow.clockwise"
+                onPress={handleRefresh}
+              />
+            )
+          ) : undefined
+        }
+      />
       <ScrollView
         nestedScrollEnabled
         alwaysBounceVertical
