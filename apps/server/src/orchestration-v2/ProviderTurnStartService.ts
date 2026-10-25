@@ -94,6 +94,27 @@ export const nativeInputRunIdsForThread = (input: {
   );
 };
 
+export const mixedNativeThreadRunIdsForThread = (
+  acceptedAttempts: ReadonlyArray<
+    Pick<OrchestrationV2RunAttempt, "runId" | "providerThreadId" | "nativeThreadId">
+  >,
+  providerThreadId: OrchestrationV2ProviderThread["id"],
+) => {
+  const nativeThreadIdsByRunId = new Map<RunId, Set<string>>();
+  for (const attempt of acceptedAttempts) {
+    if (attempt.providerThreadId !== providerThreadId || attempt.nativeThreadId === undefined)
+      continue;
+    const nativeThreadIds = nativeThreadIdsByRunId.get(attempt.runId) ?? new Set<string>();
+    nativeThreadIds.add(attempt.nativeThreadId);
+    nativeThreadIdsByRunId.set(attempt.runId, nativeThreadIds);
+  }
+  return new Set(
+    [...nativeThreadIdsByRunId]
+      .filter(([, nativeThreadIds]) => nativeThreadIds.size > 1)
+      .map(([runId]) => runId),
+  );
+};
+
 export const isNativeTranscriptHistoryKind = (kind: string) =>
   kind === "user_message" || kind === "assistant_message" || kind === "command_execution";
 
@@ -1105,6 +1126,10 @@ export const layer: Layer.Layer<
         providerThreadId: providerThread.id,
         nativeThreadId: runningProviderThread.nativeThreadRef?.nativeId,
       });
+      const mixedNativeThreadRunIds = mixedNativeThreadRunIdsForThread(
+        acceptedAttempts,
+        providerThread.id,
+      );
       const legacyInputRunIds = new Set(
         acceptedAttempts
           .filter((source) => source.nativeThreadId === undefined)
@@ -1181,7 +1206,8 @@ export const layer: Layer.Layer<
         item.providerThreadId === providerThread.id &&
         item.runId !== null &&
         isNativeTranscriptHistoryKind(item.kind ?? item.type ?? "") &&
-        nativeInputRunIds.has(item.runId);
+        nativeInputRunIds.has(item.runId) &&
+        !mixedNativeThreadRunIds.has(item.runId);
       const handoffIsAlreadyInNativeThread = (
         handoff: OrchestrationV2ContextHandoff,
         sourceItemsById: ReadonlyMap<string, OrchestrationV2TurnItem>,

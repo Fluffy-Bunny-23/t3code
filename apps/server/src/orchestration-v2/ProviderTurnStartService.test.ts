@@ -72,6 +72,21 @@ it("excludes rolled-back runs from native-thread history", () => {
   expect(nativeInputRunIds).toEqual(new Set([keptRunId]));
 });
 
+it("does not treat runs accepted on multiple native threads as native history", () => {
+  const providerThreadId = ProviderThreadId.make("provider_thread_mixed_native_history");
+  const mixedRunId = RunId.make("run_mixed_native_history");
+  const singleThreadRunId = RunId.make("run_single_native_history");
+  const attempts = [
+    { runId: mixedRunId, providerThreadId, nativeThreadId: "current-native-thread" },
+    { runId: mixedRunId, providerThreadId, nativeThreadId: "older-native-thread" },
+    { runId: singleThreadRunId, providerThreadId, nativeThreadId: "current-native-thread" },
+  ];
+
+  expect(ProviderTurnStart.mixedNativeThreadRunIdsForThread(attempts, providerThreadId)).toEqual(
+    new Set([mixedRunId]),
+  );
+});
+
 it("only treats provider transcript items as native history", () => {
   expect(ProviderTurnStart.isNativeTranscriptHistoryKind("user_message")).toBe(true);
   expect(ProviderTurnStart.isNativeTranscriptHistoryKind("command_execution")).toBe(true);
