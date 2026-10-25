@@ -73,11 +73,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     });
     if (historyCost(selected.messages, selected.context) > budget) {
       if (input.deferInline) return { context: "", delivered: Effect.void, unsent: Effect.void };
-      // The native transcript already contains this thread's conversation. If
-      // its remaining context is too small for the recovery wrapper, let the
-      // provider handle the current request against that transcript instead of
-      // failing before the provider sees it. Leave the handoff pending so a
-      // later turn with more room can still recover the omitted app history.
+      // The target transcript already has this history, so an oversized wrapper
+      // must not block the turn. Keep the handoff pending for later delivery.
       if (input.deferIfOverBudget)
         return { context: "", delivered: Effect.void, unsent: Effect.void };
       return yield* new ContextHandoffBudgetError();
