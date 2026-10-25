@@ -49,6 +49,36 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
+it("excludes rolled-back runs from native-thread history", () => {
+  const providerThreadId = ProviderThreadId.make("provider_thread_native_history");
+  const keptRunId = RunId.make("run_native_history_kept");
+  const rolledBackRunId = RunId.make("run_native_history_rolled_back");
+  const acceptedAttempts = [keptRunId, rolledBackRunId].map((runId, index) => ({
+    id: RunAttemptId.make(`attempt_native_history_${index}`),
+    runId,
+    providerThreadId,
+    nativeThreadId: "native-thread",
+  }));
+  const nativeInputRunIds = ProviderTurnStart.nativeInputRunIdsForThread({
+    acceptedAttempts,
+    runs: [
+      { id: keptRunId, status: "completed" },
+      { id: rolledBackRunId, status: "rolled_back" },
+    ] as const,
+    providerThreadId,
+    nativeThreadId: "native-thread",
+  });
+
+  expect(nativeInputRunIds).toEqual(new Set([keptRunId]));
+});
+
+it("only treats provider transcript items as native history", () => {
+  expect(ProviderTurnStart.isNativeTranscriptHistoryKind("user_message")).toBe(true);
+  expect(ProviderTurnStart.isNativeTranscriptHistoryKind("command_execution")).toBe(true);
+  expect(ProviderTurnStart.isNativeTranscriptHistoryKind("run_interrupt_result")).toBe(false);
+  expect(ProviderTurnStart.isNativeTranscriptHistoryKind("file_change")).toBe(false);
+});
+
 const managedWorktreesDir = "/tmp/provider-turn-start-worktrees";
 // fs.realpath applies `..` and `.` before following symlinks.
 const normalize = (target: string) => {
