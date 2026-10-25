@@ -421,11 +421,14 @@ const mobileEndorsementRows = [
 <script>
   import { fetchLatestRelease, RELEASES_URL, type ReleaseAsset } from "../lib/releases";
   import { startHomeMotion } from "../lib/homeMotion";
+  import { ANDROID_PLAY_STORE_URL } from "../lib/site";
 
-  type Platform = { os: "mac" | "win" | "linux"; label: string };
+  type Platform = { os: "mac" | "win" | "linux" | "android"; label: string };
 
   function detectPlatform(): Platform | null {
     const ua = navigator.userAgent;
+    // Match Android first because Android browsers also include Linux in their user agent.
+    if (/Android/i.test(ua)) return { os: "android", label: "Get it on Google Play" };
     if (/Win/i.test(ua)) return { os: "win", label: "Download for Windows" };
     if (/Mac/i.test(ua)) return { os: "mac", label: "Download for macOS" };
     if (/Linux/i.test(ua)) return { os: "linux", label: "Download for Linux" };
@@ -462,6 +465,15 @@ const mobileEndorsementRows = [
     if (label) label.textContent = platform.label;
     if (ctaLabel) ctaLabel.textContent = platform.label;
     if (kbd && platform.os !== "mac") kbd.textContent = "Ctrl ⏎";
+    if (platform.os === "android") {
+      for (const androidBtn of [btn, ctaBtn]) {
+        if (!androidBtn) continue;
+        androidBtn.href = ANDROID_PLAY_STORE_URL;
+        androidBtn.target = "_blank";
+        androidBtn.rel = "noopener noreferrer";
+      }
+      return;
+    }
 
     try {
       const release = await fetchLatestRelease();
