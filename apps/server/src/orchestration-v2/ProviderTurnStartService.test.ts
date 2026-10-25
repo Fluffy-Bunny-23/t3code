@@ -951,7 +951,9 @@ effectIt.effect(
           runId: startInput!.run.id,
           runOrdinal: startInput!.run.ordinal,
           providerTurnOrdinal: startInput!.providerTurnOrdinal,
-          nativeThreadHasTurns: startInput!.nativeThreadHasTurns,
+          ...(startInput!.nativeThreadHasTurns === undefined
+            ? {}
+            : { nativeThreadHasTurns: startInput!.nativeThreadHasTurns }),
           attemptId: startInput!.attemptId,
           rootNodeId: startInput!.rootNode.id,
           providerThread: startInput!.providerThread,
