@@ -48,6 +48,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { itemIsInNativeThread as isItemInNativeThread } from "./nativeThreadHistory.ts";
 import {
   knownProviderFailureMessage,
   makeProviderFailure,
@@ -1030,18 +1031,19 @@ export const layer: Layer.Layer<
         projection.providerTurns,
         projection.attempts,
       );
+      const compactionMessageIds = new Set(
+        projection.messages
+          .filter(
+            (candidate) =>
+              candidate.attachments.length === 0 &&
+              candidate.text.trim().toLowerCase() === "/compact",
+          )
+          .map((candidate) => candidate.id),
+      );
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
-        compactionMessageIds: new Set(
-          projection.messages
-            .filter(
-              (candidate) =>
-                candidate.attachments.length === 0 &&
-                candidate.text.trim().toLowerCase() === "/compact",
-            )
-            .map((candidate) => candidate.id),
-        ),
+        compactionMessageIds,
         run,
         attempts: projection.attempts,
       });
@@ -1149,17 +1151,26 @@ export const layer: Layer.Layer<
         (legacyInputRunIds.size > 0 &&
           sameNativeThread &&
           !acceptedAttempts.some((source) => source.nativeThreadId !== undefined));
+      const runOrdinals = new Map(projection.runs.map((source) => [source.id, source.ordinal]));
+      const latestCompactionRunOrdinal = projection.runs.reduce<number | undefined>(
+        (latest, source) =>
+          source.providerThreadId === providerThread.id &&
+          compactionMessageIds.has(source.userMessageId)
+            ? Math.max(latest ?? source.ordinal, source.ordinal)
+            : latest,
+        undefined,
+      );
       // A turn in this native thread is not enough: another provider's handoff
       // may contain work the native transcript has never seen.
-      const itemIsInNativeThread = (item: {
-        readonly threadId: string;
-        readonly providerThreadId: string | null;
-        readonly runId: string | null;
-      }) =>
-        item.threadId === projection.thread.id &&
-        item.providerThreadId === providerThread.id &&
-        item.runId !== null &&
-        nativeInputRunIds.has(item.runId);
+      const itemIsInNativeThread = (item: Parameters<typeof isItemInNativeThread>[0]["item"]) =>
+        isItemInNativeThread({
+          item,
+          threadId: projection.thread.id,
+          providerThreadId: providerThread.id,
+          acceptedRunIds: nativeInputRunIds,
+          runOrdinals,
+          latestCompactionRunOrdinal,
+        });
       const handoffIsAlreadyInNativeThread = (
         handoff: OrchestrationV2ContextHandoff,
         sourceItemsById: ReadonlyMap<string, OrchestrationV2TurnItem>,
@@ -1226,11 +1237,23 @@ export const layer: Layer.Layer<
             nativeThreadHasTurns &&
             missedItems.length === 0 &&
             handoffsToDeliver.length > 0;
+          const omittedItemIds = canDeferHandoff
+            ? Array.from(
+                new Set(
+                  handoffsToDeliver.flatMap((handoff) => handoff.history?.omittedItemIds ?? []),
+                ),
+              )
+            : [];
           const sourceItemsById =
-            canDeferHandoff &&
-            handoffsToDeliver.some((handoff) => (handoff.history?.omittedItems ?? 0) > 0)
-              ? new Map((yield* loadTurnStartHistory).map((item) => [item.id, item] as const))
-              : new Map<string, OrchestrationV2TurnItem>();
+            omittedItemIds.length === 0
+              ? new Map<string, OrchestrationV2TurnItem>()
+              : new Map(
+                  (yield* projectionStore.getTurnStartHistory(
+                    input.threadId,
+                    undefined,
+                    omittedItemIds,
+                  )).map((item) => [item.id, item] as const),
+                );
           const delivery = yield* deliverContextHandoffs({
             handoffs: handoffsToDeliver,
             deferInline: compact,
