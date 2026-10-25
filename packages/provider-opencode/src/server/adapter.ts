@@ -2991,33 +2991,32 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           );
         });
 
-        const applyPermissionRules = (
+        const applyPermissionRules = Effect.fn("OpencodeAdapter.applyPermissionRules")(function* (
           state: OpenCodeThreadState,
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined,
           nativeParentId: string | undefined,
-        ) =>
-          Effect.gen(function* () {
-            // A native subagent session carries the parent's rules plus the
-            // restrictions of its own agent, so the parent policy must not
-            // overwrite them. The in-memory marker is gone after a server
-            // restart, so the native parent id is the durable signal.
-            if (
-              runtimePolicy === undefined ||
-              state.parentSubagent !== null ||
-              nativeParentId !== undefined
-            ) {
-              return;
-            }
-            const rules = openCodePermissionRules(runtimePolicy);
-            if (permissionRulesEqual(state.appliedPermissionRules, rules)) return;
-            yield* sdkCall("session.update", { sessionID: state.nativeSessionId }, () =>
-              client.session.update({
-                sessionID: state.nativeSessionId,
-                permission: rules,
-              }),
-            );
-            state.appliedPermissionRules = rules;
-          });
+        ) {
+          // A native subagent session carries the parent's rules plus the
+          // restrictions of its own agent, so the parent policy must not
+          // overwrite them. The in-memory marker is gone after a server
+          // restart, so the native parent id is the durable signal.
+          if (
+            runtimePolicy === undefined ||
+            state.parentSubagent !== null ||
+            nativeParentId !== undefined
+          ) {
+            return;
+          }
+          const rules = openCodePermissionRules(runtimePolicy);
+          if (permissionRulesEqual(state.appliedPermissionRules, rules)) return;
+          yield* sdkCall("session.update", { sessionID: state.nativeSessionId }, () =>
+            client.session.update({
+              sessionID: state.nativeSessionId,
+              permission: rules,
+            }),
+          );
+          state.appliedPermissionRules = rules;
+        });
 
         const runtimeSession: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
