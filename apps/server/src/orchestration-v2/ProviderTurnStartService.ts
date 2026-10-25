@@ -101,16 +101,23 @@ export const mixedNativeThreadRunIdsForThread = (
   providerThreadId: OrchestrationV2ProviderThread["id"],
 ) => {
   const nativeThreadIdsByRunId = new Map<RunId, Set<string>>();
+  const runsWithUnknownNativeThread = new Set<RunId>();
   for (const attempt of acceptedAttempts) {
-    if (attempt.providerThreadId !== providerThreadId || attempt.nativeThreadId === undefined)
+    if (attempt.providerThreadId !== providerThreadId) continue;
+    if (attempt.nativeThreadId === undefined) {
+      runsWithUnknownNativeThread.add(attempt.runId);
       continue;
+    }
     const nativeThreadIds = nativeThreadIdsByRunId.get(attempt.runId) ?? new Set<string>();
     nativeThreadIds.add(attempt.nativeThreadId);
     nativeThreadIdsByRunId.set(attempt.runId, nativeThreadIds);
   }
   return new Set(
     [...nativeThreadIdsByRunId]
-      .filter(([, nativeThreadIds]) => nativeThreadIds.size > 1)
+      .filter(
+        ([runId, nativeThreadIds]) =>
+          nativeThreadIds.size > 1 || runsWithUnknownNativeThread.has(runId),
+      )
       .map(([runId]) => runId),
   );
 };
@@ -1124,7 +1131,7 @@ export const layer: Layer.Layer<
         acceptedAttempts,
         runs: projection.runs,
         providerThreadId: providerThread.id,
-        nativeThreadId: runningProviderThread.nativeThreadRef?.nativeId,
+        nativeThreadId: runningProviderThread.nativeThreadRef?.nativeId ?? undefined,
       });
       const mixedNativeThreadRunIds = mixedNativeThreadRunIdsForThread(
         acceptedAttempts,
@@ -1197,7 +1204,7 @@ export const layer: Layer.Layer<
       // may contain work the native transcript has never seen.
       const itemIsInNativeThread = (item: {
         readonly threadId: ThreadId;
-        readonly providerThreadId: OrchestrationV2TurnItem["providerThreadId"];
+        readonly providerThreadId?: OrchestrationV2TurnItem["providerThreadId"];
         readonly runId: OrchestrationV2TurnItem["runId"];
         readonly type?: string;
         readonly kind?: string;

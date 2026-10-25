@@ -3,6 +3,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ContextHandoffId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -14,6 +15,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
@@ -75,15 +77,18 @@ it("excludes rolled-back runs from native-thread history", () => {
 it("does not treat runs accepted on multiple native threads as native history", () => {
   const providerThreadId = ProviderThreadId.make("provider_thread_mixed_native_history");
   const mixedRunId = RunId.make("run_mixed_native_history");
+  const unknownRunId = RunId.make("run_unknown_native_history");
   const singleThreadRunId = RunId.make("run_single_native_history");
   const attempts = [
     { runId: mixedRunId, providerThreadId, nativeThreadId: "current-native-thread" },
     { runId: mixedRunId, providerThreadId, nativeThreadId: "older-native-thread" },
+    { runId: unknownRunId, providerThreadId, nativeThreadId: undefined },
+    { runId: unknownRunId, providerThreadId, nativeThreadId: "current-native-thread" },
     { runId: singleThreadRunId, providerThreadId, nativeThreadId: "current-native-thread" },
   ];
 
   expect(ProviderTurnStart.mixedNativeThreadRunIdsForThread(attempts, providerThreadId)).toEqual(
-    new Set([mixedRunId]),
+    new Set([mixedRunId, unknownRunId]),
   );
 });
 
@@ -837,6 +842,127 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
       "existing-native-conversation",
     );
   }),
+);
+
+effectIt.effect(
+  "does not defer an over-budget handoff for a run accepted on mixed native threads",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        previousTurn: { runStatus: "failed", turnStatus: "completed" },
+      });
+      const projection = harness.projection();
+      const providerThreadId = projection.providerThreads[0]!.id;
+      const currentNativeThreadId = "existing-native-conversation";
+      const previousRunId = RunId.make("previous-failed-run");
+      const currentRunId = projection.runs.at(-1)!.id;
+      const olderAttemptId = RunAttemptId.make("older-native-thread-attempt");
+      const currentAttemptId = RunAttemptId.make("current-native-thread-attempt");
+      const historicalItemId = TurnItemId.make("mixed-native-thread-history-item");
+      const previousTurn = projection.providerTurns[0]!;
+      harness.setProjection({
+        ...projection,
+        providerThreads: projection.providerThreads.map((thread) =>
+          thread.id === providerThreadId
+            ? {
+                ...thread,
+                contextUsage: {
+                  usedTokens: 39_999,
+                  maxTokens: 40_000,
+                  autoCompactThreshold: 40_000,
+                },
+              }
+            : thread,
+        ),
+        attempts: [
+          ...projection.attempts,
+          {
+            ...projection.attempts[0]!,
+            id: olderAttemptId,
+            runId: previousRunId,
+            providerThreadId,
+            nativeThreadId: "older-native-conversation",
+          },
+          {
+            ...projection.attempts[0]!,
+            id: currentAttemptId,
+            runId: previousRunId,
+            providerThreadId,
+            nativeThreadId: currentNativeThreadId,
+          },
+        ],
+        providerTurns: [
+          previousTurn,
+          {
+            ...previousTurn,
+            id: ProviderTurnId.make("older-native-turn"),
+            runAttemptId: olderAttemptId,
+          },
+          {
+            ...previousTurn,
+            id: ProviderTurnId.make("current-native-turn"),
+            runAttemptId: currentAttemptId,
+          },
+        ],
+        contextHandoffs: [
+          {
+            id: ContextHandoffId.make("mixed-native-thread-handoff"),
+            threadId: projection.thread.id,
+            targetRunId: currentRunId,
+            fromProviderThreadIds: [providerThreadId],
+            toProviderThreadId: providerThreadId,
+            coveredRunOrdinals: { from: 1, to: 1 },
+            strategy: "delta_since_target_last_seen",
+            status: "ready",
+            summaryMessageId: null,
+            summaryText: "",
+            history: {
+              messages: [
+                {
+                  role: "user",
+                  text: "Earlier request",
+                  threadId: projection.thread.id,
+                  runId: previousRunId,
+                  itemId: historicalItemId,
+                  providerThreadId,
+                  status: "completed",
+                  kind: "user_message",
+                },
+              ],
+              coverage: "Earlier request",
+              omittedItems: 0,
+            },
+            createdByProviderInstanceId: null,
+            createdAt: DateTime.makeUnsafe("2026-09-04T12:00:00Z"),
+            updatedAt: DateTime.makeUnsafe("2026-09-04T12:00:00Z"),
+          },
+        ],
+      });
+
+      yield* harness.start;
+
+      const startInput = harness.startRootRun.mock.calls[0]?.[0];
+      expect(startInput).toBeDefined();
+      const delivery = yield* Effect.result(
+        startInput!.session.startTurn({
+          appThread: startInput!.appThread,
+          threadId: startInput!.run.threadId,
+          runId: startInput!.run.id,
+          runOrdinal: startInput!.run.ordinal,
+          providerTurnOrdinal: startInput!.providerTurnOrdinal,
+          nativeThreadHasTurns: startInput!.nativeThreadHasTurns,
+          attemptId: startInput!.attemptId,
+          rootNodeId: startInput!.rootNode.id,
+          providerThread: startInput!.providerThread,
+          message: startInput!.message,
+          modelSelection: startInput!.modelSelection,
+          runtimePolicy: startInput!.runtimePolicy,
+        }),
+      );
+
+      expect(delivery._tag).toBe("Failure");
+    }),
 );
 
 effectIt.effect.each([
