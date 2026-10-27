@@ -1305,6 +1305,7 @@ export const layer: Layer.Layer<
         handoffUsage,
         deliveredItemIds,
         nativeInputRunIds,
+        mixedNativeThreadRunIds,
         nativeThreadHasTurns,
         budget,
       } = handoffContext;

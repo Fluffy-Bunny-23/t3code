@@ -617,7 +617,11 @@ function makeLocalCommandHarness(input: {
       ),
     ),
   );
-  const startTurn = vi.fn(() => Effect.void);
+  const startedTurns: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
+  const startTurn = vi.fn((turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) => {
+    startedTurns.push(turnInput);
+    return Effect.void;
+  });
   const resumeFallbackSession = {
     driver: providerThread.driver,
     resumeThread: () =>
@@ -844,6 +848,7 @@ function makeLocalCommandHarness(input: {
     createWorktree,
     open,
     startTurn,
+    startedTurns,
     writeIfRunCurrent,
     startRootRun,
     interruptTurn,
@@ -1173,7 +1178,7 @@ effectIt.effect(
 
       expect(delivery._tag).toBe("Success");
       expect(harness.startTurn).toHaveBeenCalledOnce();
-      expect(harness.startTurn.mock.calls[0]?.[0].message.text).toContain("Earlier request");
+      expect(harness.startedTurns[0]?.message.text).toContain("Earlier request");
     }),
 );
 
