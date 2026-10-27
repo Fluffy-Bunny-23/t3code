@@ -324,6 +324,7 @@ function makeLocalCommandHarness(input: {
   readonly openFailure?: unknown;
   readonly ensureThreadFailure?: unknown;
   readonly historyReadFailureAfterFallback?: unknown;
+  readonly allowRecoveryHandoff?: boolean;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -508,6 +509,7 @@ function makeLocalCommandHarness(input: {
     checkpoints: [],
     updatedAt: now,
   };
+  let turnStartHistory: OrchestrationV2ThreadProjection["turnItems"] | undefined;
   if ("historyReadFailureAfterFallback" in input) {
     const nativeThreadRef = {
       driver: providerThread.driver,
@@ -615,6 +617,7 @@ function makeLocalCommandHarness(input: {
       ),
     ),
   );
+  const startTurn = vi.fn(() => Effect.void);
   const resumeFallbackSession = {
     driver: providerThread.driver,
     resumeThread: () =>
@@ -665,6 +668,7 @@ function makeLocalCommandHarness(input: {
                   },
                   ensureThread: () => Effect.succeed(providerThread),
                   resumeThread: () => Effect.succeed(projection.providerThreads[0]),
+                  startTurn,
                 } as never)
               : Effect.die("A local command must not open a native session."),
   );
@@ -744,9 +748,31 @@ function makeLocalCommandHarness(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
-          prepareProviderHandoff: () => Effect.die("history read must fail first"),
+          prepareProviderHandoff: (handoff) =>
+            input.allowRecoveryHandoff
+              ? Effect.succeed({
+                  ...handoff,
+                  id: ContextHandoffId.make("provider-turn-start-recovery-handoff"),
+                  status: "ready",
+                  summaryMessageId: null,
+                  summaryText: "",
+                  history: {
+                    messages: [],
+                    coverage: "",
+                    omittedItems: 0,
+                    omittedItemIds: [],
+                  },
+                  createdByProviderInstanceId: null,
+                  updatedAt: handoff.createdAt,
+                } as never)
+              : Effect.die("history read must fail first"),
         }),
-        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        Layer.mock(EventSink.EventSinkV2)({
+          writeIfRunCurrent,
+          ...(input.allowRecoveryHandoff
+            ? { write: () => Effect.succeed({ storedEvents: [] } as never) }
+            : {}),
+        }),
         IdAllocator.layer,
         layerWorktreeLocation(input.worktreesDir),
         input.fileSystem === undefined
@@ -778,12 +804,14 @@ function makeLocalCommandHarness(input: {
               ),
             }),
           getTurnStartHistory: () =>
-            Effect.fail(
-              new ProjectionStore.ProjectionStoreReadError({
-                threadId,
-                cause: input.historyReadFailureAfterFallback,
-              }),
-            ),
+            turnStartHistory === undefined
+              ? Effect.fail(
+                  new ProjectionStore.ProjectionStoreReadError({
+                    threadId,
+                    cause: input.historyReadFailureAfterFallback,
+                  }),
+                )
+              : Effect.succeed(turnStartHistory),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           open,
@@ -815,6 +843,7 @@ function makeLocalCommandHarness(input: {
     resolveRuntimePolicy,
     createWorktree,
     open,
+    startTurn,
     writeIfRunCurrent,
     startRootRun,
     interruptTurn,
@@ -824,6 +853,9 @@ function makeLocalCommandHarness(input: {
     newInstanceId,
     attemptId,
     projection: () => projection,
+    setTurnStartHistory: (items: OrchestrationV2ThreadProjection["turnItems"]) => {
+      turnStartHistory = items;
+    },
     start: Effect.gen(function* () {
       yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({ threadId, runId });
     }).pipe(Effect.provide(layer)),
@@ -1021,13 +1053,15 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
 );
 
 effectIt.effect(
-  "does not defer an over-budget handoff for a run accepted on mixed native threads",
+  "recovers an over-budget handoff from mixed native threads before starting the turn",
   () =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "Continue",
         previousTurn: { runStatus: "failed", turnStatus: "completed" },
+        allowRecoveryHandoff: true,
       });
+      harness.setTurnStartHistory([]);
       const projection = harness.projection();
       const providerThreadId = projection.providerThreads[0]!.id;
       const currentNativeThreadId = "existing-native-conversation";
@@ -1137,7 +1171,9 @@ effectIt.effect(
         }),
       );
 
-      expect(delivery._tag).toBe("Failure");
+      expect(delivery._tag).toBe("Success");
+      expect(harness.startTurn).toHaveBeenCalledOnce();
+      expect(harness.startTurn.mock.calls[0]?.[0].message.text).toContain("Earlier request");
     }),
 );
 

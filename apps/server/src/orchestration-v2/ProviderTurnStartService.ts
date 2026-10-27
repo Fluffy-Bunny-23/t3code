@@ -1304,9 +1304,8 @@ export const layer: Layer.Layer<
         sameNativeThread,
         handoffUsage,
         deliveredItemIds,
-        acceptedAttempts,
         nativeInputRunIds,
-        legacyInputRunIds,
+        nativeThreadHasTurns,
         budget,
       } = handoffContext;
       const retryHandoff = resumedRetryHandoff ?? (yield* prepareRetryHandoff(handoffContext));
