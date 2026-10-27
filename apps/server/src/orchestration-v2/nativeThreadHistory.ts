@@ -41,6 +41,7 @@ type NativeHistoryItem = {
   readonly runId?: OrchestrationV2TurnItem["runId"];
   readonly type?: OrchestrationV2TurnItem["type"];
   readonly kind?: OrchestrationV2HistoricalMessage["kind"];
+  readonly nativeItemRef?: OrchestrationV2TurnItem["nativeItemRef"] | undefined;
 };
 
 export const itemIsInNativeThread = (input: {
@@ -55,6 +56,8 @@ export const itemIsInNativeThread = (input: {
   if (
     item.type === "run_interrupt_result" ||
     item.kind === "run_interrupt_result" ||
+    ((item.type === "command_execution" || item.kind === "command_execution") &&
+      item.nativeItemRef?.nativeId == null) ||
     item.threadId !== input.threadId ||
     item.providerThreadId !== input.providerThreadId ||
     item.runId == null ||

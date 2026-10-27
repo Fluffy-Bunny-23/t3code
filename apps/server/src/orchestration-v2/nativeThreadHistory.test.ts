@@ -1,5 +1,11 @@
 import { expect, it } from "vite-plus/test";
-import { MessageId, ProviderThreadId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  MessageId,
+  ProviderDriverKind,
+  ProviderThreadId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import { itemIsInNativeThread, latestNativeCompactionRunOrdinal } from "./nativeThreadHistory.ts";
 
@@ -82,6 +88,34 @@ it("only treats retained provider input as native transcript history", () => {
       },
     }),
   ).toBe(false);
+  expect(
+    itemIsInNativeThread({
+      ...shared,
+      item: {
+        type: "command_execution",
+        threadId,
+        providerThreadId,
+        runId: afterCompaction,
+        nativeItemRef: null,
+      },
+    }),
+  ).toBe(false);
+  expect(
+    itemIsInNativeThread({
+      ...shared,
+      item: {
+        type: "command_execution",
+        threadId,
+        providerThreadId,
+        runId: afterCompaction,
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "command-1",
+          strength: "strong",
+        },
+      },
+    }),
+  ).toBe(true);
   expect(
     itemIsInNativeThread({
       ...shared,
