@@ -120,6 +120,34 @@ it("only treats retained provider input as native transcript history", () => {
     itemIsInNativeThread({
       ...shared,
       item: {
+        type: "error",
+        threadId,
+        providerThreadId,
+        runId: afterCompaction,
+        nativeItemRef: null,
+      },
+    }),
+  ).toBe(false);
+  expect(
+    itemIsInNativeThread({
+      ...shared,
+      item: {
+        type: "error",
+        threadId,
+        providerThreadId,
+        runId: afterCompaction,
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "error-1",
+          strength: "strong",
+        },
+      },
+    }),
+  ).toBe(true);
+  expect(
+    itemIsInNativeThread({
+      ...shared,
+      item: {
         type: "user_message",
         threadId,
         providerThreadId,

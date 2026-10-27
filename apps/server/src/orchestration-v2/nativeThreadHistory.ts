@@ -56,7 +56,10 @@ export const itemIsInNativeThread = (input: {
   if (
     item.type === "run_interrupt_result" ||
     item.kind === "run_interrupt_result" ||
-    ((item.type === "command_execution" || item.kind === "command_execution") &&
+    ((item.type === "command_execution" ||
+      item.kind === "command_execution" ||
+      item.type === "error" ||
+      item.kind === "error") &&
       item.nativeItemRef?.nativeId == null) ||
     item.threadId !== input.threadId ||
     item.providerThreadId !== input.providerThreadId ||
